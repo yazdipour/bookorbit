@@ -144,6 +144,22 @@ describe('AppSettingsService', () => {
     });
   });
 
+  describe('isOpdsEpubCompatibilityEnabled', () => {
+    it('returns false by default when setting is absent', async () => {
+      repo.findByKey.mockResolvedValue(undefined);
+      expect(await service.isOpdsEpubCompatibilityEnabled()).toBe(false);
+    });
+
+    it('returns false when value is "false"', async () => {
+      repo.findByKey.mockResolvedValue({ key: 'opds_epub_compat_enabled', value: 'false' } as never);
+      expect(await service.isOpdsEpubCompatibilityEnabled()).toBe(false);
+    });
+
+    it('returns true when value is "true"', async () => {
+      repo.findByKey.mockResolvedValue({ key: 'opds_epub_compat_enabled', value: 'true' } as never);
+      expect(await service.isOpdsEpubCompatibilityEnabled()).toBe(true);
+    });
+  });
   describe('getOidcConfig', () => {
     it('returns default config when no row in db', async () => {
       repo.findByKey.mockResolvedValue(undefined);

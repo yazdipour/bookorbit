@@ -6,6 +6,10 @@ import type { OpdsBookEntry } from './opds-book.service';
 const BASE = '/api/v1/opds';
 const SEARCH_TEMPLATE = `${BASE}/catalog?q={searchTerms}`;
 
+export interface OpdsFeedOptions {
+  epubCompat?: boolean;
+}
+
 @Injectable()
 export class OpdsService {
   generateRootNavigation(): string {
@@ -119,6 +123,7 @@ export class OpdsService {
     size: number,
     selfPath: string,
     coverToken: string,
+    options: OpdsFeedOptions = {},
   ): string {
     const now = new Date().toISOString();
     const totalPages = Math.max(1, Math.ceil(total / size));
@@ -139,7 +144,7 @@ export class OpdsService {
       links.push(xmlLink('last', pageUrl(totalPages), OPDS_MIME_ACQ));
     }
 
-    const entries = books.map((book) => this.bookEntry(book, coverToken));
+    const entries = books.map((book) => this.bookEntry(book, coverToken, options));
 
     return this.wrapFeed(title, feedId, now, links, entries, total);
   }
@@ -157,7 +162,7 @@ export class OpdsService {
     ].join('\n');
   }
 
-  private bookEntry(book: OpdsBookEntry, coverToken: string): string {
+  private bookEntry(book: OpdsBookEntry, coverToken: string, options: OpdsFeedOptions): string {
     const lines: string[] = [];
     lines.push('<entry>');
     lines.push(`  ${xmlEl('title', book.title)}`);
@@ -200,10 +205,11 @@ export class OpdsService {
     }
 
     for (const file of book.files) {
-      const mime = fileMimeType(file.format);
-      lines.push(
-        `  ${xmlLink('http://opds-spec.org/acquisition', `${BASE}/${book.id}/download?fileId=${file.id}`, mime, file.format.toUpperCase())}`,
-      );
+      const convertPdf = options.epubCompat && file.format.toLowerCase() === 'pdf';
+      const format = convertPdf ? 'epub' : file.format;
+      const mime = fileMimeType(format);
+      const href = convertPdf ? `${BASE}/${book.id}/download?fileId=${file.id}&convert=epub` : `${BASE}/${book.id}/download?fileId=${file.id}`;
+      lines.push(`  ${xmlLink('http://opds-spec.org/acquisition', href, mime, format.toUpperCase())}`);
     }
 
     lines.push('</entry>');

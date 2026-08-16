@@ -379,6 +379,27 @@ describe('OpdsService', () => {
       expect(xml).toContain('fileId=10');
       expect(xml).toContain('fileId=11');
     });
+
+    it('advertises PDF files as converted EPUBs in EPUB compatibility mode', () => {
+      const service = makeService();
+      const book = sampleBook({ files: [{ id: 11, format: 'pdf' }] });
+      const xml = service.generateAcquisitionFeed(
+        'Catalog',
+        'urn:bookorbit:catalog',
+        [book],
+        1,
+        1,
+        50,
+        `${BASE}/catalog?v=1.1&page=1&size=50`,
+        'test-token',
+        { epubCompat: true },
+      );
+
+      expect(xml).toContain('application/epub+zip');
+      expect(xml).toContain('convert=epub');
+      expect(xml).toContain('title="EPUB"');
+      expect(xml).not.toContain('application/pdf');
+    });
   });
 
   describe('generateOpenSearchDescription', () => {

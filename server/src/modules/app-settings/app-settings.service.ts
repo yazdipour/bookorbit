@@ -148,6 +148,10 @@ export class AppSettingsService {
     return this.getBookDockSettings();
   }
 
+  async isOpdsEpubCompatibilityEnabled(): Promise<boolean> {
+    const row = await this.repo.findByKey(APP_SETTING_KEYS.OPDS_EPUB_COMPAT_ENABLED);
+    return parseBooleanSetting(row?.value, false);
+  }
   async getOidcConfig(): Promise<OidcFullConfig> {
     const row = await this.repo.findByKey(APP_SETTING_KEYS.OIDC_CONFIG);
     const stored = parseSafe<Partial<OidcFullConfig>>(APP_SETTING_KEYS.OIDC_CONFIG, row?.value, {}, this.logger);

@@ -17,6 +17,7 @@ const { hasPermission } = usePermissions()
 const canManageSettings = computed(() => hasPermission('manage_app_settings'))
 
 const opdsEnabled = ref(true)
+const opdsEpubCompatEnabled = ref(true)
 const opdsUsers = ref<OpdsUser[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -53,8 +54,10 @@ onMounted(async () => {
     const [settingsRes, usersRes] = await Promise.all([api('/api/v1/app-settings'), api('/api/v1/opds-users')])
     if (settingsRes.ok) {
       const settings = await settingsRes.json()
-      const row = settings.find((s: { key: string; value: string }) => s.key === 'opds_enabled')
-      opdsEnabled.value = row?.value === 'true'
+      const opdsEnabledRow = settings.find((s: { key: string; value: string }) => s.key === 'opds_enabled')
+      const epubCompatRow = settings.find((s: { key: string; value: string }) => s.key === 'opds_epub_compat_enabled')
+      opdsEnabled.value = opdsEnabledRow?.value === 'true'
+      opdsEpubCompatEnabled.value = epubCompatRow?.value === 'true'
     }
     if (usersRes.ok) {
       opdsUsers.value = await usersRes.json()
@@ -82,6 +85,25 @@ async function toggleOpds() {
     }
   } catch {
     toast.error(t('settings.reader.opds.updateSettingsFailed'))
+  }
+}
+
+async function toggleEpubCompat() {
+  const newVal = !opdsEpubCompatEnabled.value
+  try {
+    const res = await api('/api/v1/app-settings/opds_epub_compat_enabled', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: String(newVal) }),
+    })
+    if (res.ok) {
+      opdsEpubCompatEnabled.value = newVal
+      toast.success(`EPUB compatibility ${newVal ? 'enabled' : 'disabled'}`)
+    } else {
+      toast.error('Failed to update OPDS settings')
+    }
+  } catch {
+    toast.error('Failed to update OPDS settings')
   }
 }
 
@@ -238,6 +260,13 @@ function cancelDelete() {
             </p>
           </div>
           <ToggleSwitch :model-value="opdsEnabled" class="self-start md:self-auto" @update:model-value="toggleOpds()" />
+        </div>
+        <div class="flex flex-col gap-3 px-4 py-3.5 bg-card border-t border-border md:flex-row md:items-center md:justify-between md:px-5 md:py-4">
+          <div class="min-w-0">
+            <p class="settings-label">EPUB Compatibility</p>
+            <p class="settings-hint">Show PDFs as EPUB downloads and convert them when fetched</p>
+          </div>
+          <ToggleSwitch :model-value="opdsEpubCompatEnabled" class="self-start md:self-auto" @update:model-value="toggleEpubCompat()" />
         </div>
       </div>
     </div>
