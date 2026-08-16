@@ -22,12 +22,14 @@ import { MAX_OFFSET_ROWS, isOffsetWithinLimit } from '../../common/constants/pag
 import { Public } from '../../common/decorators/public.decorator';
 import { imageContentTypeFromPath } from '../../common/image-content-type';
 import { contentDispositionHeader } from '../../common/utils/content-disposition.utils';
+import { AppSettingsService } from '../app-settings/app-settings.service';
 import { OPDS_MIME_ACQ, OPDS_MIME_NAV, OPDS_MIME_SEARCH, fileMimeType } from './opds-xml.helpers';
 import { OpdsAuthGuard } from './opds-auth.guard';
 import type { OpdsRequestUser } from './opds-auth.guard';
 import { OpdsEnabledGuard } from './opds-enabled.guard';
 import { OpdsUser } from './opds-user.decorator';
 import { OpdsBookService } from './opds-book.service';
+import { OpdsConversionService } from './opds-conversion.service';
 import { OpdsService } from './opds.service';
 import { BookService } from '../book/book.service';
 
@@ -40,6 +42,8 @@ export class OpdsController {
   constructor(
     private readonly opdsService: OpdsService,
     private readonly opdsBookService: OpdsBookService,
+    private readonly opdsConversionService: OpdsConversionService,
+    private readonly appSettingsService: AppSettingsService,
     private readonly config: ConfigService,
     private readonly bookService: BookService,
   ) {
@@ -107,6 +111,7 @@ export class OpdsController {
     @Res() reply?: FastifyReply,
     @Query('seriesId') seriesIdStr?: string,
   ) {
+    const compatibilityOptions = await this.compatibilityOptions();
     const clampedSize = Math.min(Math.max(size, 1), 100);
     const clampedPage = Math.max(page, 1);
     this.assertPaginationWindow(clampedPage, clampedSize);
@@ -148,7 +153,17 @@ export class OpdsController {
     const feedId = filterSuffix ? `urn:bookorbit:catalog:${filterSuffix}` : 'urn:bookorbit:catalog';
 
     const feedTitle = q ? `Search: ${q}` : 'Catalog';
-    const xml = this.opdsService.generateAcquisitionFeed(feedTitle, feedId, entries, total, clampedPage, clampedSize, selfPath, user.coverToken);
+    const xml = this.opdsService.generateAcquisitionFeed(
+      feedTitle,
+      feedId,
+      entries,
+      total,
+      clampedPage,
+      clampedSize,
+      selfPath,
+      user.coverToken,
+      compatibilityOptions,
+    );
     this.sendXml(reply!, xml, OPDS_MIME_ACQ);
   }
 
@@ -159,6 +174,7 @@ export class OpdsController {
     @Query('size', new DefaultValuePipe(50), ParseIntPipe) size: number,
     @Res() reply?: FastifyReply,
   ) {
+    const compatibilityOptions = await this.compatibilityOptions();
     const clampedSize = Math.min(Math.max(size, 1), 100);
     const clampedPage = Math.max(page, 1);
     this.assertPaginationWindow(clampedPage, clampedSize);
@@ -180,12 +196,14 @@ export class OpdsController {
       clampedSize,
       selfPath,
       user.coverToken,
+      compatibilityOptions,
     );
     this.sendXml(reply!, xml, OPDS_MIME_ACQ);
   }
 
   @Get('surprise')
   async surprise(@OpdsUser() user: OpdsRequestUser, @Res() reply: FastifyReply) {
+    const compatibilityOptions = await this.compatibilityOptions();
     const entries = await this.opdsBookService.getRandomBooks(user.userId, 25, user.isSuperuser, user.contentFilters);
     const xml = this.opdsService.generateAcquisitionFeed(
       'Random Books',
@@ -196,6 +214,7 @@ export class OpdsController {
       25,
       '/api/v1/opds/surprise',
       user.coverToken,
+      compatibilityOptions,
     );
     this.sendXml(reply, xml, OPDS_MIME_ACQ);
   }
@@ -266,6 +285,8 @@ export class OpdsController {
   async download(
     @Param('bookId', ParseIntPipe) bookId: number,
     @Query('fileId', new DefaultValuePipe(0), ParseIntPipe) fileId: number,
+    @Query('convert') convert: string | undefined,
+    @Query('amp;convert') escapedConvert: string | undefined,
     @OpdsUser() user: OpdsRequestUser,
     @Res() reply: FastifyReply,
   ) {
@@ -274,8 +295,8 @@ export class OpdsController {
     const bookFiles = await this.opdsBookService.getBookFiles(bookId, fileId);
     if (!bookFiles) throw new NotFoundException('File not found');
 
-    const { absolutePath, format } = bookFiles;
-    const { size: fileSize } = await stat(absolutePath);
+    const { id, absolutePath, format, title, authorName } = bookFiles;
+    const { size: fileSize, mtimeMs } = await stat(absolutePath);
     const mime = fileMimeType(format);
 
     const filename = await this.bookService.resolveDownloadFilename({
@@ -283,6 +304,15 @@ export class OpdsController {
       absolutePath,
       format: format === 'unknown' ? null : format,
     });
+
+    if (await this.shouldConvertPdf(format, convert, escapedConvert)) {
+      const safeName =
+        [title, authorName]
+          .filter(Boolean)
+          .join(' - ')
+          .replace(/[^\w\s.-]/g, '') || `book-${bookId}`;
+      return this.opdsConversionService.streamPdfAsEpub(absolutePath, id, fileSize, mtimeMs, safeName, reply);
+    }
 
     reply.header('Content-Disposition', contentDispositionHeader('attachment', filename, 'download'));
     reply.header('Content-Length', fileSize);
@@ -305,5 +335,16 @@ export class OpdsController {
       throw new BadRequestException(`${name} must be a positive integer`);
     }
     return parsed;
+  }
+
+  private async compatibilityOptions() {
+    return { epubCompat: await this.appSettingsService.isOpdsEpubCompatibilityEnabled() };
+  }
+
+  private async shouldConvertPdf(format: string, convert: string | undefined, escapedConvert: string | undefined): Promise<boolean> {
+    if (format.toLowerCase() !== 'pdf') return false;
+    if (convert === 'epub' || escapedConvert === 'epub') return true;
+    if (convert === 'false' || escapedConvert === 'false') return false;
+    return this.appSettingsService.isOpdsEpubCompatibilityEnabled();
   }
 }

@@ -138,6 +138,11 @@ export class AppSettingsService {
     return this.getBookDockSettings();
   }
 
+  async isOpdsEpubCompatibilityEnabled(): Promise<boolean> {
+    const row = await this.repo.findByKey(APP_SETTING_KEYS.OPDS_EPUB_COMPAT_ENABLED);
+    return parseBooleanSetting(row?.value, false);
+  }
+
   async getAuthorsAutoEnrichmentWriteMode(): Promise<AuthorAutoEnrichmentWriteMode> {
     const row = await this.repo.findByKey(APP_SETTING_KEYS.AUTHORS_AUTO_ENRICHMENT_WRITE_MODE);
     const mode = row?.value?.trim();

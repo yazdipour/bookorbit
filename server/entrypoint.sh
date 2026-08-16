@@ -36,7 +36,7 @@ fix_owner() {
 
 check_writable_as_user() {
   dir="$1"
-  if ! su-exec "$APP_UID:$APP_GID" sh -c 'touch "$1/.bookorbit-permission-test" && rm -f "$1/.bookorbit-permission-test"' sh "$dir"; then
+  if ! gosu "$APP_UID:$APP_GID" sh -c 'touch "$1/.bookorbit-permission-test" && rm -f "$1/.bookorbit-permission-test"' sh "$dir"; then
     log "$dir is not writable by UID:GID $APP_UID:$APP_GID."
     log "Set PUID/PGID to a NAS user with write access, or fix the host folder ownership/ACLs."
     exit 1
@@ -167,7 +167,7 @@ if [ "$(id -u)" = "0" ]; then
   check_writable_as_user "$APP_DATA_PATH"
   check_writable_as_user "$APP_DATA_PATH/covers"
   check_writable_as_user "$book_bucket_path"
-  exec su-exec "$APP_UID:$APP_GID" sh -c 'node dist/scripts/migrate.js && exec node --max-old-space-size="$NODE_MAX_OLD_SPACE_SIZE" dist/main.js'
+  exec gosu "$APP_UID:$APP_GID" sh -c 'node dist/scripts/migrate.js && exec node --max-old-space-size="$NODE_MAX_OLD_SPACE_SIZE" dist/main.js'
 fi
 
 check_writable_current_user "$APP_DATA_PATH"

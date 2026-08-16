@@ -43,11 +43,18 @@ function makeController() {
     getRandomBooks: vi.fn().mockResolvedValue([{ id: 3 }]),
     validateBookAccess: vi.fn().mockResolvedValue(undefined),
     getBookFiles: vi.fn().mockResolvedValue({
+      id: 10,
       absolutePath: '/books/library/book.epub',
       format: 'epub',
       title: 'Book Title',
       authorName: 'Author Name',
     }),
+  } as never;
+  const opdsConversionService = {
+    streamPdfAsEpub: vi.fn(),
+  } as never;
+  const appSettingsService = {
+    isOpdsEpubCompatibilityEnabled: vi.fn().mockResolvedValue(true),
   } as never;
   const config = {
     get: vi.fn().mockReturnValue('/books'),
@@ -57,9 +64,11 @@ function makeController() {
   } as never;
 
   return {
-    controller: new OpdsController(opdsService, opdsBookService, config, bookService),
+    controller: new OpdsController(opdsService, opdsBookService, opdsConversionService, appSettingsService, config, bookService),
     opdsService,
     opdsBookService,
+    opdsConversionService,
+    appSettingsService,
     bookService,
   };
 }
@@ -145,6 +154,28 @@ describe('OpdsController', () => {
       100,
       expect.stringContaining('/api/v1/opds/catalog?'),
       'token',
+      { epubCompat: true },
+    );
+  });
+
+  it('uses the OPDS EPUB compatibility app setting for acquisition feeds', async () => {
+    const { controller, opdsService, appSettingsService } = makeController();
+    const user = { userId: 7, isSuperuser: false, sortOrder: 'recent', coverToken: 'token' } as never;
+
+    appSettingsService.isOpdsEpubCompatibilityEnabled.mockResolvedValue(false);
+
+    await controller.catalog(user, 1, 50, undefined, undefined, undefined, undefined, undefined, undefined, makeReply());
+
+    expect(opdsService.generateAcquisitionFeed).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      { epubCompat: false },
     );
   });
 
@@ -156,6 +187,7 @@ describe('OpdsController', () => {
     expect(noFilters.opdsService.generateAcquisitionFeed).toHaveBeenCalledWith(
       expect.anything(),
       'urn:bookorbit:catalog',
+      expect.anything(),
       expect.anything(),
       expect.anything(),
       expect.anything(),
@@ -175,6 +207,7 @@ describe('OpdsController', () => {
       expect.anything(),
       expect.anything(),
       expect.anything(),
+      expect.anything(),
     );
 
     const searchOnly = makeController();
@@ -188,6 +221,7 @@ describe('OpdsController', () => {
       expect.anything(),
       expect.anything(),
       expect.anything(),
+      expect.anything(),
     );
 
     const multiFilter = makeController();
@@ -195,6 +229,7 @@ describe('OpdsController', () => {
     expect(multiFilter.opdsService.generateAcquisitionFeed).toHaveBeenCalledWith(
       expect.anything(),
       'urn:bookorbit:catalog:author:Frank%20Herbert:libraryId:2',
+      expect.anything(),
       expect.anything(),
       expect.anything(),
       expect.anything(),
@@ -235,6 +270,7 @@ describe('OpdsController', () => {
       25,
       '/api/v1/opds/surprise',
       'cover-token',
+      { epubCompat: true },
     );
   });
 
@@ -332,6 +368,7 @@ describe('OpdsController', () => {
     const stream = { kind: 'download-stream' };
 
     opdsBookService.getBookFiles.mockResolvedValue({
+      id: 10,
       absolutePath: '/books/library/book.epub',
       format: 'epub',
       title: 'Bad:/Title*',
@@ -340,7 +377,7 @@ describe('OpdsController', () => {
     mockStat.mockResolvedValue({ size: 12345 } as never);
     mockCreateReadStream.mockReturnValue(stream as never);
 
-    await controller.download(99, 0, { userId: 2, isSuperuser: false } as never, reply);
+    await controller.download(99, 0, undefined, undefined, { userId: 2, isSuperuser: false } as never, reply);
 
     expect(reply.header).toHaveBeenCalledWith(
       'Content-Disposition',
@@ -351,10 +388,71 @@ describe('OpdsController', () => {
     expect(reply.send).toHaveBeenCalledWith(stream);
   });
 
+  it('converts PDF downloads to EPUB when requested by compatibility feed', async () => {
+    const { controller, opdsBookService, opdsConversionService } = makeController();
+    const reply = makeReply();
+
+    opdsBookService.getBookFiles.mockResolvedValue({
+      id: 25,
+      absolutePath: '/books/library/book.pdf',
+      format: 'pdf',
+      title: 'PDF Title',
+      authorName: 'Author Name',
+    });
+    mockStat.mockResolvedValue({ size: 12345, mtimeMs: 9876 } as never);
+
+    await controller.download(99, 25, 'epub', undefined, { userId: 2, isSuperuser: false } as never, reply);
+
+    expect(opdsConversionService.streamPdfAsEpub).toHaveBeenCalledWith('/books/library/book.pdf', 25, 12345, 9876, 'PDF Title - Author Name', reply);
+    expect(mockCreateReadStream).not.toHaveBeenCalled();
+  });
+
+  it('converts PDF downloads by default when EPUB compatibility is enabled', async () => {
+    const { controller, opdsBookService, opdsConversionService } = makeController();
+    const reply = makeReply();
+
+    opdsBookService.getBookFiles.mockResolvedValue({
+      id: 25,
+      absolutePath: '/books/library/book.pdf',
+      format: 'pdf',
+      title: 'PDF Title',
+      authorName: 'Author Name',
+    });
+    mockStat.mockResolvedValue({ size: 12345, mtimeMs: 9876 } as never);
+
+    await controller.download(99, 25, undefined, undefined, { userId: 2, isSuperuser: false } as never, reply);
+
+    expect(opdsConversionService.streamPdfAsEpub).toHaveBeenCalledWith('/books/library/book.pdf', 25, 12345, 9876, 'PDF Title - Author Name', reply);
+  });
+
+  it('serves original PDF when EPUB compatibility is explicitly bypassed', async () => {
+    const { controller, opdsBookService, opdsConversionService } = makeController();
+    const reply = makeReply();
+    const stream = { kind: 'pdf-stream' };
+
+    opdsBookService.getBookFiles.mockResolvedValue({
+      id: 25,
+      absolutePath: '/books/library/book.pdf',
+      format: 'pdf',
+      title: 'PDF Title',
+      authorName: 'Author Name',
+    });
+    mockStat.mockResolvedValue({ size: 12345, mtimeMs: 9876 } as never);
+    mockCreateReadStream.mockReturnValue(stream as never);
+
+    await controller.download(99, 25, 'false', undefined, { userId: 2, isSuperuser: false } as never, reply);
+
+    expect(opdsConversionService.streamPdfAsEpub).not.toHaveBeenCalled();
+    expect(reply.type).toHaveBeenCalledWith('application/pdf');
+    expect(reply.send).toHaveBeenCalledWith(stream);
+  });
+
   it('throws NotFoundException when requested download file is unavailable', async () => {
     const { controller, opdsBookService } = makeController();
     opdsBookService.getBookFiles.mockResolvedValue(null);
 
-    await expect(controller.download(88, 77, { userId: 2, isSuperuser: false } as never, makeReply())).rejects.toThrow(NotFoundException);
+    await expect(controller.download(88, 77, undefined, undefined, { userId: 2, isSuperuser: false } as never, makeReply())).rejects.toThrow(
+      NotFoundException,
+    );
   });
 });

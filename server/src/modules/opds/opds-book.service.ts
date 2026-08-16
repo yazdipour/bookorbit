@@ -648,9 +648,13 @@ export class OpdsBookService {
     }
   }
 
-  async getBookFiles(bookId: number, fileId?: number): Promise<{ absolutePath: string; format: string; title: string; authorName: string } | null> {
+  async getBookFiles(
+    bookId: number,
+    fileId?: number,
+  ): Promise<{ id: number; absolutePath: string; format: string; title: string; authorName: string } | null> {
     const fileQuery = this.db
       .select({
+        id: bookFiles.id,
         absolutePath: bookFiles.absolutePath,
         format: bookFiles.format,
         title: bookMetadata.title,
@@ -673,6 +677,7 @@ export class OpdsBookService {
       .limit(1);
 
     return {
+      id: file.id,
       absolutePath: file.absolutePath,
       format: file.format ?? 'unknown',
       title: file.title ?? `book-${bookId}`,

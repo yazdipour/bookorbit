@@ -1,4 +1,4 @@
-ARG NODE_IMAGE=node:26.7.0-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019
+ARG NODE_IMAGE=node:26.7.0-bookworm-slim@sha256:cd565714d4da3e84bfd341e31448f81d47c6362198f152345297c9c1154e6341
 
 FROM ${NODE_IMAGE} AS base
 RUN npm install -g pnpm@11.22.0
@@ -51,17 +51,30 @@ COPY server/requirements/kobo-cloudscraper.txt /tmp/kobo-cloudscraper-requiremen
 
 # pip is build-only here. Leaving it installed also leaves pip/_vendor/vendor.txt,
 # which Trivy reads as installed msgpack and setuptools and fails the image scan on.
-RUN apk upgrade --no-cache && \
-    apk add --no-cache poppler-utils su-exec ffmpeg python3 py3-pip tini && \
+# On Debian's Python 3.11, venv also bundles setuptools/wheel alongside pip (unlike
+# newer Python where venv stopped doing that), so they need removing explicitly too.
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+      calibre \
+      ffmpeg \
+      gosu \
+      poppler-utils \
+      python3 \
+      python3-venv \
+      python3-pip \
+      tini && \
     python3 -m venv /opt/bookorbit-python && \
     /opt/bookorbit-python/bin/python -m pip install --no-cache-dir -r /tmp/kobo-cloudscraper-requirements.txt && \
-    /opt/bookorbit-python/bin/python -m pip uninstall -y pip && \
-    apk del py3-pip && \
+    /opt/bookorbit-python/bin/python -m pip uninstall -y pip setuptools wheel && \
+    apt-get purge -y python3-pip && \
+    apt-get autoremove -y && \
     rm -f /tmp/kobo-cloudscraper-requirements.txt && \
-    rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+    rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV PDF_TO_EPUB_CONVERTER_PATH=/usr/bin/ebook-convert
 
 COPY --from=server-builder --chown=node:node /deploy ./
 COPY --from=client-builder --chown=node:node /app/client/dist ./public
@@ -76,5 +89,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["node", "-e", "const p=process.env.PORT||3000;fetch('http://127.0.0.1:'+p+'/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 
-ENTRYPOINT ["/sbin/tini", "-s", "--"]
+ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["sh", "/app/entrypoint.sh"]
